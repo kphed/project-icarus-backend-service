@@ -14,7 +14,10 @@ const createDB = require('./db');
 const dbApi = require('./db-api');
 const importerApi = require('./importer-api');
 const configCleanup = require('./cleanup');
-const manageConnections = require('./ws-connections');
+const {
+  manageConnections,
+  handleNotifications,
+ } = require('./ws-connections');
 
 const serverConfig = config.get('server');
 const { logger, importerSendTxEndpoint } = serverConfig;
@@ -32,9 +35,34 @@ function addHttps(defaultRestifyConfig) {
   return Object.assign({}, defaultRestifyConfig, httpsConfig);
 }
 
+async function setUpDb(db) {
+  try {
+    const client = await db.connect();
+
+    // Remove existing "transaction created"-related triggers and functions
+    await client.query('DROP TRIGGER IF EXISTS TxCreatedTrigger ON "txs"');
+    await client.query('DROP FUNCTION IF EXISTS NotifyTxCreated()');
+
+    // Add a function and trigger for executing logic when transactions are created
+    await client.query("CREATE FUNCTION NotifyTxCreated() RETURNS trigger AS $BODY$ BEGIN PERFORM pg_notify(CAST('txCreated' AS text), CAST(NEW.hash AS text)); RETURN new; END; $BODY$ LANGUAGE 'plpgsql';");
+    await client.query('CREATE TRIGGER TxCreatedTrigger AFTER INSERT ON "txs" FOR EACH ROW EXECUTE PROCEDURE NotifyTxCreated()');
+
+    // Attach a listener for the "txCreated" notification
+    await client.query('LISTEN "txCreated"');
+
+    // Define the logic for handling notifications that we are listening to
+    client.on('notification', data => handleNotifications(data, db, serverConfig));
+  } catch (err) {
+    logger.error('Encountered an error while setting up the db', err);
+  }
+}
+
 async function createServer() {
   const db = await createDB(config.get('db'));
+
   logger.info('Connected to db');
+
+  await setUpDb(db);
 
   const defaultRestifyConfig = {
     log: logger,
@@ -69,7 +97,8 @@ async function createServer() {
   });
 
   const wss = new WebSocket.Server({ server });
-  wss.on('connection', manageConnections(dbApi(db), serverConfig));
+
+  wss.on('connection', manageConnections);
 
   configCleanup(db, logger);
 
