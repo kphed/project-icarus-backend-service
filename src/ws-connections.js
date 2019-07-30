@@ -1,47 +1,48 @@
-// @flow
-import type {
-  ServerConfig,
-  DbApi,
-} from 'icarus-backend'; // eslint-disable-line
-const _ = require('lodash');
+const WebSocket = require('ws');
 
-const fromMessage: any = JSON.parse;
-const toMessage = JSON.stringify;
+const connectedClients = [];
 
-const MSG_TYPE_RESTORE = 'RESTORE';
-
-async function handleRestore(
-  dbApi: DbApi,
-  { logger }: ServerConfig,
-  ws: any,
-) {
-  try {
-    logger.debug('[WS::handleRestore] Start');
-    const result = await dbApi.unspentAddresses();
-    logger.debug('[WS::handleRestore] Db result ready');
-    logger.debug('[WS::handleRestore] Addresses processing start');
-    const addresses = _.flatten(result.rows);
-    logger.debug('[WS::handleRestore] About to send the addresses');
-    ws.send(toMessage({
-      msg: MSG_TYPE_RESTORE,
-      addresses,
-    }));
-    logger.debug('[WS::handleRestore] End');
-  } catch (err) {
-    logger.error('[WS::handleRestore]', err);
-  }
-}
-
-module.exports = (dbApi: DbApi, { logger, apiConfig }: ServerConfig) => (ws: any) => {
-  ws.on('message', (msg) => {
-    logger.debug(`[WS::onMessage] ${msg}`);
-    const data = fromMessage(msg);
-    switch (data.msg) {
-      case MSG_TYPE_RESTORE:
-        handleRestore(dbApi, { logger, apiConfig }, ws);
-        break;
-      default:
-        break;
+// Broadcast incoming notifications to connected clients
+const broadcastEvent = (channel, data) => (
+  connectedClients.forEach((client) => {
+    // Only send if the client is available
+    if (client.readyState === WebSocket.OPEN) {
+      client.send(JSON.stringify({
+        channel,
+        data,
+      }));
     }
-  });
+  })
+);
+
+const handleNotifications = async (data, db, { logger }) => {
+  const {
+    channel,
+    payload,
+  } = data;
+
+  switch (channel) {
+    case 'txCreated':
+      try {
+        const res = await db.query('SELECT * FROM txs WHERE hash = $1', [payload]);
+
+        if (res && res.rowCount) {
+          broadcastEvent(channel, res.rows[0]);
+        }
+      } catch (err) {
+        logger.error('Encountered an error while handling a db notification', err);
+      }
+
+      break;
+    default:
+      break;
+  }
+};
+
+// Add connections to list for broadcasting messages (and processing, later, if needed)
+const manageConnections = ws => connectedClients.push(ws);
+
+module.exports = {
+  manageConnections,
+  handleNotifications,
 };

@@ -1,3 +1,11 @@
+# sōshen Open-Source Modifications
+For use with https://github.com/kphed/soshen-oss/tree/extended.
+
+Modifications:
+
+- Broadcast notifications when a row is inserted into the `txs` table (new network transactions)
+- Update WebSocket logic for compatibility with soshen's node API server application
+
 # Project Icarus - Backend Service
 
 [![CircleCI](https://circleci.com/gh/input-output-hk/icarus-poc-backend-service.svg?style=svg)](https://circleci.com/gh/input-output-hk/icarus-poc-backend-service)
@@ -90,7 +98,7 @@ Then, run `export NODE_ENV=test; npm run integration-tests`
 
 ### Coverage
 
-Istanbul will be used to get test coverage. It will execute both unit and integration tests. 
+Istanbul will be used to get test coverage. It will execute both unit and integration tests.
 
 To run it, execute `npm run coverage`
 
